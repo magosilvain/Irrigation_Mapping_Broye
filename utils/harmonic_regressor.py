@@ -3,6 +3,33 @@ from typing import List, Dict, Any
 import math
 
 
+def add_temporal_bands(collection: ee.ImageCollection) -> ee.ImageCollection:
+    """Add temporal and constant bands to each image in the collection. This is for harmonic regression.
+
+    Args:
+        collection: The input image collection.
+
+    Returns:
+        ee.ImageCollection: The collection with added bands."""
+
+    def _add_bands(image: ee.Image) -> ee.Image:
+        date = ee.Date(image.get("system:time_start"))
+        years = date.difference(ee.Date("1970-01-01"), "year")
+
+        projection = image.select([0]).projection()
+        time_band = ee.Image(years).float().rename("t")
+        constant_band = ee.Image.constant(1).rename("constant")
+
+        return image.addBands(
+            [
+                time_band.setDefaultProjection(projection),
+                constant_band.setDefaultProjection(projection),
+            ]
+        )
+
+    return collection.map(_add_bands)
+
+
 class HarmonicRegressor:
     def __init__(
         self,

@@ -130,16 +130,16 @@ class SentinelProcessor:
 
 
 def load_sentinel2_data(
-    year: int,
+    years_range: tuple[int, int],
     aoi: ee.Geometry,
     cloud_params: Optional[CloudMaskParams] = None,
     apply_water_mask: bool = True,
 ) -> ee.ImageCollection:
     """
-    Load and process Sentinel-2 data with enhanced cloud filtering.
+    Load and process Sentinel-2 data with enhanced cloud filtering for a range of years.
 
     Args:
-        year (int): The year for which to load data.
+        years_range (tuple[int, int]): Start and end years (inclusive) for data loading.
         aoi (ee.Geometry): The area of interest.
         cloud_params (Optional[CloudMaskParams]): Custom cloud masking parameters.
         apply_water_mask (bool): Whether to apply water masking.
@@ -150,8 +150,8 @@ def load_sentinel2_data(
     processor = SentinelProcessor(cloud_params or CloudMaskParams())
 
     # Set up date range
-    start_date = ee.Date.fromYMD(year, 1, 1)
-    end_date = ee.Date.fromYMD(year, 12, 31)
+    start_date = ee.Date.fromYMD(years_range[0], 1, 1)
+    end_date = ee.Date.fromYMD(years_range[1], 12, 31)
 
     # Load and filter collection with stricter initial cloud filter
     s2_collection = (
@@ -159,7 +159,7 @@ def load_sentinel2_data(
         .filterDate(start_date, end_date)
         .filterBounds(aoi)
         .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", 40))
-    )  # Reduced from 50
+    )
 
     # Get cloud probability collection
     s2_cloudless = (
