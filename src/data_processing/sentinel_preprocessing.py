@@ -134,6 +134,7 @@ def load_sentinel2_data(
     aoi: ee.Geometry,
     cloud_params: Optional[CloudMaskParams] = None,
     apply_water_mask: bool = True,
+    use_SR: bool = False,
 ) -> ee.ImageCollection:
     """
     Load and process Sentinel-2 data with enhanced cloud filtering for a range of years.
@@ -154,8 +155,13 @@ def load_sentinel2_data(
     end_date = ee.Date.fromYMD(years_range[1], 12, 31)
 
     # Load and filter collection with stricter initial cloud filter
+
+    collection_to_use = (
+        "COPERNICUS/S2_SR_HARMONIZED" if use_SR else "COPERNICUS/S2_HARMONIZED"
+    )
+
     s2_collection = (
-        ee.ImageCollection("COPERNICUS/S2_HARMONIZED")
+        ee.ImageCollection(collection_to_use)
         .filterDate(start_date, end_date)
         .filterBounds(aoi)
         .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", 40))

@@ -35,7 +35,7 @@ def resample_image(
                 crs=original_projection, scale=target_scale
             ).setDefaultProjection(crs=original_projection, scale=target_scale)
             # Rename the band with 'resampled_' prefix
-            return resampled.rename([f"resampled_{band_name}"])
+            return resampled
 
         # Create a list of resampled band images
         resampled_bands = [resample_band(band) for band in bands_to_resample]
@@ -48,13 +48,10 @@ def resample_image(
         selected = image.select(bands_to_resample)
         resampled = selected.reproject(crs=original_projection, scale=target_scale)
         # Rename all bands with 'resampled_' prefix
-        new_names = [f"resampled_{band}" for band in bands_to_resample]
-        resampled = resampled.rename(new_names)
+        resampled = resampled
 
-    # Combine original image with resampled bands
-    result = image.addBands(resampled)
 
-    return result.copyProperties(image).set(
+    return resampled.copyProperties(image).set(
         {
             "system:time_start": image.get("system:time_start"),
             "resampled": True,
@@ -71,7 +68,7 @@ class Downscaler:
     A class to perform downscaling of Earth Engine images using regression-based methods.
     """
 
-    def __init__(self, independent_vars: List[str], dependent_var: str):
+    def __init__(self, independent_bands: List[str], dependent_band: str):
         """
         Initialize the Downscaler with variable configurations.
 
@@ -80,8 +77,8 @@ class Downscaler:
             dependent_var (str): Name of the dependent variable (e.g., 'ET').
             coefficients (Optional[Dict[str, float]]): Dictionary to store regression coefficients.
         """
-        self.independent_vars = independent_vars
-        self.dependent_var = dependent_var
+        self.independent_bands = independent_bands
+        self.dependent_band = dependent_band
         self.coefficients: Optional[Dict[str, float]] = None
         logging.basicConfig(level=logging.INFO)
 
@@ -133,9 +130,9 @@ class Downscaler:
         Returns:
             ee.Dictionary: The result of the linear regression.
         """
-        independent_vars = independent_vars.select(self.independent_vars)
+        independent_vars = independent_vars.select(self.independent_bands)
         independent_vars = ee.Image.constant(1).addBands(independent_vars)
-        dependent_var = dependent_var.select([self.dependent_var])
+        dependent_var = dependent_var.select([self.dependent_band])
 
         all_vars = independent_vars.addBands(dependent_var)
         numX = ee.List(independent_vars.bandNames()).length()
@@ -166,7 +163,7 @@ class Downscaler:
                 "intercept": ee.Number(ee.List(coefficients.get(0)).get(0)),
                 **{
                     f"slope_{var}": ee.Number(ee.List(coefficients.get(i + 1)).get(0))
-                    for i, var in enumerate(self.independent_vars)
+                    for i, var in enumerate(self.independent_bands)
                 },
             }
         except ee.EEException as e:
@@ -190,7 +187,7 @@ class Downscaler:
 
         try:
             predicted = ee.Image(self.coefficients["intercept"])
-            for var in self.independent_vars:
+            for var in self.independent_bands:
                 slope = self.coefficients[f"slope_{var}"]
                 predicted = predicted.add(independent_vars.select(var).multiply(slope))
 
