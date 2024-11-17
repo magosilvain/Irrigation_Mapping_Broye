@@ -1,24 +1,23 @@
-# File: /src/gee_processing/sentinel_cloud_mask.py
-
 import ee
 from dataclasses import dataclass
-from typing import List, Optional, Dict, Any, Callable
+from typing import List, Optional, Dict, Any, Callable, Tuple
 
 
 @dataclass
 class CloudMaskParams:
     """Parameters for cloud masking configuration."""
 
-    cloud_prob_threshold: int = 50
-    cloud_filter: int = 40
+    cloud_prob_threshold: int = 40
+    cloud_filter: int = 60
     nir_dark_threshold: float = 0.15
-    cloud_proj_distance: int = 2
-    buffer: int = 100
+    cloud_proj_distance: int = 10
+    buffer: int = 50
     mask_resolution: int = 60
+    ndvi_threshold: float = 0.99
 
 
 class SentinelProcessor:
-    """Enhanced Sentinel-2 data processor with improved cloud masking."""
+    """Sentinel-2 data processor with cloud masking."""
 
     def __init__(self, params: CloudMaskParams = CloudMaskParams()):
         self.params = params
@@ -27,50 +26,45 @@ class SentinelProcessor:
         """Get the global water mask."""
         return ee.Image("JRC/GSW1_4/GlobalSurfaceWater").select("max_extent").eq(0)
 
-    def _apply_quality_mask(self, image: ee.Image) -> ee.Image:
-        """Apply QA60 bitmask for basic quality filtering."""
-        qa_mask = image.select("QA60")
-        cloud_bitmask = 1 << 10  # Bit 10: Opaque clouds
-        cirrus_bitmask = 1 << 11  # Bit 11: Cirrus clouds
-        return image.updateMask(
-            qa_mask.bitwiseAnd(cloud_bitmask)
-            .eq(0)
-            .And(qa_mask.bitwiseAnd(cirrus_bitmask).eq(0))
+    def _add_cloud_bands(self, image: ee.Image) -> ee.Image:
+        """Add cloud probability and initial mask bands."""
+        # Cloud probability from s2cloudless
+        cloud_prob = ee.Image(image.get("s2cloudless")).select("probability")
+        is_cloud = cloud_prob.gt(self.params.cloud_prob_threshold)
+
+        # Calculate NDVI
+        ndvi = image.normalizedDifference(["B8", "B4"]).rename("NDVI")
+
+        # Create combined cloud mask
+        cloud_mask = (
+            ee.Image(1)
+            # QA60 filter
+            .where(
+                image.select("QA60").lt(1024),
+                # B1 filter
+                ee.Image(1).where(image.select("B1").gt(0), 0),
+            )
+            # NDVI filter
+            .where(ndvi.gt(self.params.ndvi_threshold), 1)
+            # Combine with cloud probability
+            .Or(is_cloud).rename("clouds")
         )
 
-    def _add_cloud_bands(self, image: ee.Image) -> ee.Image:
-        """Enhanced cloud probability and mask bands."""
-        # Get cloud probability from s2cloudless
-        cloud_prob = ee.Image(image.get("s2cloudless")).select("probability")
-
-        # Create basic cloud mask
-        is_cloud = cloud_prob.gt(self.params.cloud_prob_threshold).rename("clouds")
-
-        # Additional check for bright pixels in blue band
-        bright_pixels = image.select("B2").gt(2500)
-
-        # Combine cloud probability with bright pixels
-        combined_cloud = is_cloud.Or(bright_pixels).rename("clouds")
-
-        return image.addBands([cloud_prob.rename("probability"), combined_cloud])
+        return image.addBands(cloud_prob.rename("probability")).addBands(cloud_mask)
 
     def _add_shadow_bands(self, image: ee.Image, water_mask: ee.Image) -> ee.Image:
-        """Enhanced cloud shadow detection."""
-        # More conservative NIR threshold for shadows
+        """Add cloud shadow detection bands."""
         dark_pixels = (
             image.select("B8")
-            .lt(self.params.nir_dark_threshold * 0.8)
-            .And(image.select("B3").lt(self.params.nir_dark_threshold * 0.8))
+            .lt(self.params.nir_dark_threshold)
             .multiply(water_mask)
             .rename("dark_pixels")
         )
 
-        # Calculate shadow direction based on solar angle
         shadow_azimuth = ee.Number(90).subtract(
             ee.Number(image.get("MEAN_SOLAR_AZIMUTH_ANGLE"))
         )
 
-        # Project clouds to find shadows
         cloud_proj = (
             image.select("clouds")
             .directionalDistanceTransform(
@@ -84,77 +78,48 @@ class SentinelProcessor:
             .rename("cloud_transform")
         )
 
-        # Combine cloud projection with dark pixels
         shadows = cloud_proj.multiply(dark_pixels).rename("shadows")
-
         return image.addBands([dark_pixels, cloud_proj, shadows])
 
-    def _add_cloud_shadow_mask(self, image: ee.Image, water_mask: ee.Image) -> ee.Image:
-        """Create final cloud and shadow mask with enhanced filtering."""
-        # Apply basic quality mask first
-        image = self._apply_quality_mask(image)
-
-        # Add cloud and shadow bands
-        with_clouds = self._add_cloud_bands(image)
-        with_shadows = self._add_shadow_bands(with_clouds, water_mask)
-
-        # Combine clouds and shadows
-        is_cld_shdw = with_shadows.select("clouds").Or(with_shadows.select("shadows"))
-
-        # Apply morphological operations for cleaner mask
-        final_mask = (
-            is_cld_shdw.focal_min(2)
-            .focal_max(self.params.buffer * 2 / self.params.mask_resolution)
-            .reproject(
-                crs=image.select([0]).projection(), scale=self.params.mask_resolution
-            )
-            .rename("cloudmask")
-        )
-
-        # Return image with all masks
-        return with_shadows.addBands(final_mask)
-
     def process_image(self, image: ee.Image) -> ee.Image:
-        """Process a single Sentinel-2 image with enhanced cloud masking."""
+        """Process a single Sentinel-2 image with cloud masking."""
         projection = image.select("B3").projection()
         water_mask = self._get_water_mask().reproject(projection)
 
-        # Apply all masks
-        masked = self._add_cloud_shadow_mask(image, water_mask)
+        with_clouds = self._add_cloud_bands(image)
+        with_shadows = self._add_shadow_bands(with_clouds, water_mask)
 
-        # Only keep pixels that pass all masks
-        final_mask = masked.select("cloudmask").Not()
-        masked = masked.updateMask(final_mask)
+        final_mask = (
+            with_shadows.select("clouds").Or(with_shadows.select("shadows")).Not()
+        )
+        masked = with_shadows.updateMask(final_mask)
 
-        return masked.reproject(projection)
+        # Add time band
+        date = ee.Date(image.get("system:time_start"))
+        years = date.difference(ee.Date("1970-01-01"), "year")
+        time_band = ee.Image(years).float().rename("t").reproject(projection)
+
+        # Add constant band
+        constant_band = ee.Image.constant(1).reproject(projection)
+
+        return (
+            masked.addBands([time_band, constant_band])
+            .reproject(projection)
+            .set("CLOUD_COVER", image.get("CLOUDY_PIXEL_PERCENTAGE"))
+        )
 
 
 def load_sentinel2_data(
     years_range: tuple[int, int],
     aoi: ee.Geometry,
     cloud_params: Optional[CloudMaskParams] = None,
-    apply_water_mask: bool = True,
     use_SR: bool = False,
 ) -> ee.ImageCollection:
-    """
-    Load and process Sentinel-2 data with enhanced cloud filtering for a range of years.
-
-    Args:
-        years_range (tuple[int, int]): Start and end years (inclusive) for data loading.
-        aoi (ee.Geometry): The area of interest.
-        cloud_params (Optional[CloudMaskParams]): Custom cloud masking parameters.
-        apply_water_mask (bool): Whether to apply water masking.
-
-    Returns:
-        ee.ImageCollection: Processed Sentinel-2 image collection.
-    """
+    """Load and process Sentinel-2 data with cloud filtering."""
     processor = SentinelProcessor(cloud_params or CloudMaskParams())
 
-    # Set up date range
     start_date = ee.Date.fromYMD(years_range[0], 1, 1)
     end_date = ee.Date.fromYMD(years_range[1], 12, 31)
-
-    # Load and filter collection with stricter initial cloud filter
 
     collection_to_use = (
         "COPERNICUS/S2_SR_HARMONIZED" if use_SR else "COPERNICUS/S2_HARMONIZED"
@@ -164,20 +129,22 @@ def load_sentinel2_data(
         ee.ImageCollection(collection_to_use)
         .filterDate(start_date, end_date)
         .filterBounds(aoi)
-        .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", 40))
+        .filter(
+            ee.Filter.lt(
+                "CLOUDY_PIXEL_PERCENTAGE",
+                cloud_params.cloud_filter if cloud_params else 60,
+            )
+        )
     )
 
-    # Get cloud probability collection
     s2_cloudless = (
         ee.ImageCollection("COPERNICUS/S2_CLOUD_PROBABILITY")
         .filterBounds(aoi)
         .filterDate(start_date, end_date)
     )
 
-    # Join collections
-    join = ee.Join.saveFirst("s2cloudless")
     joined = ee.ImageCollection(
-        join.apply(
+        ee.Join.saveFirst("s2cloudless").apply(
             primary=s2_collection,
             secondary=s2_cloudless,
             condition=ee.Filter.equals(
@@ -186,10 +153,4 @@ def load_sentinel2_data(
         )
     )
 
-    # Process each image
-    processed = joined.map(processor.process_image)
-
-    # Additional post-processing filter for remaining cloudy images
-    return processed.filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", 20)).set(
-        "sensor_id", 0
-    )
+    return joined.map(processor.process_image).set("sensor_id", 0)
