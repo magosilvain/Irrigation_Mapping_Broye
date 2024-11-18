@@ -4,7 +4,6 @@ from dataclasses import dataclass
 from enum import Enum
 
 
-
 class MosaicType(str, Enum):
     RECENT = "recent"
     LEAST_CLOUDY = "least_cloudy"
@@ -83,10 +82,17 @@ def _create_empty_image(
     original_scale: ee.Number,
     timestamp: Dict[str, Any],
 ) -> ee.Image:
-    """Creates an empty image with consistent projection."""
-    empty_image = ee.Image.constant(0).rename(band_list[0])
+    """Creates an empty (masked) image with consistent projection."""
+    # Create first band as masked
+    empty_image = ee.Image.constant(0).rename(band_list[0]).mask(ee.Image(0))
+
+    # Add additional bands, all masked
     for band in band_list[1:]:
-        empty_image = empty_image.addBands(ee.Image.constant(0).rename(band))
+        empty_image = empty_image.addBands(
+            ee.Image.constant(0).rename(band).mask(ee.Image(0))
+        )
+
+    # Set proper projection and timestamp
     return (
         empty_image.setDefaultProjection(original_projection, None, original_scale)
         .set(timestamp)
