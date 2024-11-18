@@ -138,9 +138,6 @@ def process_et_green(
         time_step_type (str): Type of time step ("dekadal" or "monthly")
         not_irrigated_crops (List[str]): List of crops to exclude
         rainfed_crops (List[str]): List of rainfed reference crops
-
-    Returns:
-        List[ee.batch.Task]: List of export tasks
     """
     # Use default crop lists if none provided
     if not_irrigated_crops is None:

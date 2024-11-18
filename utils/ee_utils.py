@@ -423,18 +423,36 @@ def aggregate_to_monthly(
     ).sort("system:time_start")
 
 
-def back_to_float(image: ee.Image, scale: int) -> ee.Image:
+def back_to_float(
+    image: ee.Image,
+    scale: int,
+    dynamic: bool = False,
+    scaling_factor_property: str = None,
+) -> ee.Image:
     """
-    Convert an image to float and divide by the scale
+    Convert an image to float with either static or dynamic scaling.
 
     Args:
         image: The image to convert
-        scale: The scale to divide by
+        scale: The default scale to divide by when dynamic=False
+        dynamic: If True, reads scale from image property
+        scaling_factor_property: Name of image property containing scale factor
 
     Returns:
-        The image converted to float and divided by the scale
+        The image converted to float and divided by appropriate scale
+
+    Raises:
+        ValueError: If dynamic=True but scaling_factor_property is None
     """
+    if dynamic and not scaling_factor_property:
+        raise ValueError("scaling_factor_property must be specified when dynamic=True")
+
     date = image.get("system:time_start")
+
+    if dynamic:
+        scale_factor = ee.Number(image.get(scaling_factor_property))
+        return image.toFloat().divide(scale_factor).set("system:time_start", date)
+
     return image.toFloat().divide(scale).set("system:time_start", date)
 
 
