@@ -493,7 +493,6 @@ def export_image_to_asset(
     )
 
     print(f"Exporting {task_name} for {year} to {asset_id}")
-    print(f"Using projection {crs} at {scale}m resolution")
     task.start()
     return task
 
