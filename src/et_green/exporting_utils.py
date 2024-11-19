@@ -12,28 +12,34 @@ from src.et_green.filter_nutzungsflaechen import (
 from utils.ee_utils import back_to_int, export_image_to_asset
 
 
-def get_time_step_info(index: int, time_step_type: str) -> Tuple[str, int]:
+def get_time_step_pattern(date: ee.Date, time_step_type: str) -> str:
     """
-    Get formatted time step information based on index and type.
+    Get formatted time step pattern from a date based on type.
 
     Args:
-        index (int): Time step index
+        date (ee.Date): The date to process
         time_step_type (str): Either 'dekadal' or 'monthly'
 
     Returns:
-        Tuple[str, int]: Formatted time step name and month number
+        str: Formatted time step pattern (e.g. '04_D1' for dekadal or '04' for monthly)
+
+    Raises:
+        ValueError: If time_step_type is neither 'dekadal' nor 'monthly'
     """
-    if time_step_type == "dekadal":
-        dekadal = index % 3 + 1
-        month = index // 3 + 1
-        time_step_name = f"{month:02d}_D{dekadal}"
-    elif time_step_type == "monthly":
-        month = index + 1
-        time_step_name = f"{month:02d}"
-    else:
+    if time_step_type not in ["dekadal", "monthly"]:
         raise ValueError("time_step_type must be either 'dekadal' or 'monthly'")
 
-    return time_step_name, month
+    # Add 1 to month since GEE uses 0-based months
+    month = date.get("month").getInfo()
+    month_str = f"{month:02d}"
+
+    if time_step_type == "monthly":
+        return month_str
+
+    # For dekadal, determine which 10-day period
+    day = date.get("day").getInfo()
+    dekadal = ((day - 1) // 10) + 1
+    return f"{month_str}_D{dekadal}"
 
 
 def prepare_rainfed_fields(
@@ -116,7 +122,6 @@ def process_et_green(
     aoi: ee.Geometry,
     asset_path: str,
     et_band_name: str = "downscaled",
-    time_steps: int = 36,
     time_step_type: str = "dekadal",
     resolution: int = 10,
     not_irrigated_crops: List[str] = None,
@@ -134,8 +139,8 @@ def process_et_green(
         aoi (ee.Geometry): Area of interest
         asset_path (str): Base path for asset export
         et_band_name (str): Name of the ET band to process
-        time_steps (int): Number of time steps
         time_step_type (str): Type of time step ("dekadal" or "monthly")
+        resolution (int): Export resolution in meters
         not_irrigated_crops (List[str]): List of crops to exclude
         rainfed_crops (List[str]): List of rainfed reference crops
     """
@@ -151,21 +156,25 @@ def process_et_green(
     )
 
     tasks = []
-    for i in range(time_steps):
-        # Get time step information
-        time_step_name, _ = get_time_step_info(i, time_step_type)
+    collection_size = ee.List(et_collection_list).size().getInfo()
 
+    for i in range(collection_size):
         # Process ET image
         et_image = ee.Image(et_collection_list.get(i))
+
+        # Get time step pattern from image date
+        date = ee.Date(et_image.get("system:time_start"))
+        time_step_pattern = get_time_step_pattern(date, time_step_type)
+
         et_green = compute_et_green(
             et_image, rainfed_fields, jurisdictions, et_band_name=et_band_name
         )
 
-        # Convert to integer (assuming back_to_int is a utility function)
+        # Convert to integer
         et_green = back_to_int(et_green, 100)
 
         # Create export task
-        task_name = f"ET_green_{time_step_type}_{year}_{time_step_name}"
+        task_name = f"ET_green_{time_step_type}_{year}_{time_step_pattern}"
         task = generate_export_task(
             et_green, asset_path, task_name, year, aoi, resolution
         )

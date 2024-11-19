@@ -511,7 +511,7 @@ def export_image_to_asset(
     )
 
     print(f"Exporting {task_name} for {year} to {asset_id}")
-    task.start()
+    # task.start() TODO: Uncomment to start the export task
     return task
 
 
@@ -550,3 +550,31 @@ def print_value_ranges(
     # Print results
     for i, (min_val, max_val) in enumerate(stats):
         print(f"Image {i + 1}: Min = {min_val:.2f}, Max = {max_val:.2f}")
+
+
+def is_image_empty(image: ee.Image) -> bool:
+    """
+    Check if an image is empty (all bands are masked).
+
+    Args:
+        image (ee.Image): The image to check.
+
+    Returns:
+        bool: True if the image is empty (fully masked), False otherwise.
+    """
+    # Get all band names
+    band_names = image.bandNames()
+
+    # Create a combined mask across all bands (1 where any band has data)
+    combined_mask = image.mask().reduce(ee.Reducer.anyNonZero())
+
+    # Count pixels with valid data using reduceRegion
+    valid_pixels = combined_mask.reduceRegion(
+        reducer=ee.Reducer.sum(),
+        geometry=image.geometry(),
+        scale=image.projection().nominalScale(),
+        maxPixels=1e9,
+    ).get("any")
+
+    # Convert the computed sum to a number and check if it equals 0
+    return ee.Number(valid_pixels).eq(0).getInfo()
