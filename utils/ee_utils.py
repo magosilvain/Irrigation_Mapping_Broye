@@ -511,7 +511,7 @@ def export_image_to_asset(
     )
 
     print(f"Exporting {task_name} for {year} to {asset_id}")
-    # task.start() TODO: Uncomment to start the export task
+    task.start() 
     return task
 
 
