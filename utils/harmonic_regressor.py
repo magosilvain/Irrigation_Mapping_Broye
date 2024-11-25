@@ -95,6 +95,33 @@ class HarmonicRegressor:
             harmonic_collection, self._regression_coefficients
         )
         return self
+    
+    def fit2(self, image_collection: ee.ImageCollection) -> "HarmonicRegressor":
+        """
+        Fit the harmonic regression model to the input image collection.
+
+        Args:
+            image_collection (ee.ImageCollection): Input image collection.
+
+        Returns:
+            HarmonicRegressor: Fitted model.
+
+        Raises:
+            TypeError: If image_collection is not an ee.ImageCollection.
+        """
+        if not isinstance(image_collection, ee.ImageCollection):
+            raise TypeError("image_collection must be an ee.ImageCollection.")
+
+        # Prepare the harmonic collection and compute regression coefficients
+        harmonic_collection = self._prepare_harmonic_collection(image_collection)
+        self._regression_coefficients = self._compute_regression_coefficients(
+            harmonic_collection
+        )
+        self._fitted_data = self._compute_fitted_values(
+            harmonic_collection, self._regression_coefficients
+        )
+        return self
+
 
     def predict(self, image_collection: ee.ImageCollection) -> ee.ImageCollection:
         """

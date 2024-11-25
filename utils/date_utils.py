@@ -99,6 +99,26 @@ def create_centered_date_ranges(image_list: ee.List, buffer_days: int = 5) -> ee
 
     return image_list.map(lambda img: create_centered_range(img, buffer_days))
 
+def create_monthly_date_ranges(image_list: ee.List) -> ee.List:
+    """
+    Creates date ranges representing the first and last day of the month for each image in the list.
+
+    Args:
+        image_list (ee.List): A list of Earth Engine images.
+
+    Returns:
+        ee.List: A list of lists, where each inner list contains two ee.Date objects
+                 representing the start and end of the month for the image's timestamp.
+    """
+
+    def create_monthly_range(image):
+        center_date = ee.Date(ee.Image(image).get("system:time_start"))
+        start_date = center_date.getRange("month").start()  # First day of the month
+        end_date = center_date.getRange("month").end()  # Last day of the month
+        return ee.List([start_date, end_date])
+
+    return image_list.map(create_monthly_range)
+
 
 def set_to_first_of_month(collection: ee.ImageCollection) -> ee.ImageCollection:
     """

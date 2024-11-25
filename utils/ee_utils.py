@@ -7,6 +7,7 @@ from enum import Enum
 class MosaicType(str, Enum):
     RECENT = "recent"
     LEAST_CLOUDY = "least_cloudy"
+    MAX_NDVI = "max_NDVI"
 
 
 class AggregationType(str, Enum):
@@ -128,6 +129,8 @@ def _apply_mosaic(
     """Applies mosaic operation with consistent projection."""
     if mosaic_type == MosaicType.RECENT:
         mosaic_image = collection.mosaic()
+    elif mosaic_type == MosaicType.MAX_NDVI:
+        mosaic_image = collection.qualityMosaic("NDVI")
     elif mosaic_type == MosaicType.LEAST_CLOUDY:
         mosaic_image = collection.sort("CLOUDY_PIXEL_PERCENTAGE").mosaic()
     else:

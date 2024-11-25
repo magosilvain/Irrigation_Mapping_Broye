@@ -100,7 +100,7 @@ def load_wapor_et_data(
                             ee.Date.fromYMD(
                                 yr,
                                 month,
-                                (ee.Number(dekad).subtract(1).multiply(10)).add(1),
+                                (ee.Number(dekad).subtract(1).multiply(10)).add(1).add(5),
                             ),
                         )
                         .set("Month", month)
@@ -118,7 +118,7 @@ def load_wapor_et_data(
                 lambda yr: ee.List.sequence(1, 12).map(
                     lambda month: process_image(
                         build_url("monthly", ee.Number(yr), ee.Number(month)),
-                        ee.Date.fromYMD(yr, month, 1),
+                        ee.Date.fromYMD(yr, month, 16),
                     )
                     .set("Month", month)
                     .set("Year", yr)

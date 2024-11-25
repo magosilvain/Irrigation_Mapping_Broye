@@ -272,8 +272,8 @@ class Downscaler:
                         "final_projection": fine_projection.wkt(),
                     }
                 )
-                .setDefaultProjection(crs=fine_projection, scale=fine_scale)
-                .reproject(crs=fine_projection, scale=fine_scale)
+                # .setDefaultProjection(crs=fine_projection, scale=fine_scale)
+                # .reproject(crs=fine_projection, scale=fine_scale)
             )
 
         except Exception as e:
