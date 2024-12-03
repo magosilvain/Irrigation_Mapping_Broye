@@ -52,91 +52,6 @@ def validate_image_band(image: ee.Image, band_name: str) -> ee.Number:
         return ee.Number(0)
 
 
-def compute_et_green(
-    et_image: ee.Image,
-    rainfed_reference: ee.FeatureCollection,
-    feature_collection: ee.FeatureCollection,
-    et_band_name: str = "downscaled",
-    max_pixels: int = MAX_PIXELS_DEFAULT,
-) -> ee.Image:
-    """
-    Compute ET green based on the given ET image and rainfed reference areas.
-
-    Args:
-        et_image (ee.Image): An image containing ET values
-        rainfed_reference (ee.FeatureCollection): A feature collection of rainfed reference areas
-        feature_collection (ee.FeatureCollection): A feature collection over which to compute the ET green values
-        et_band_name (str): The name of the band in the ET image containing the ET values
-        max_pixels (int): Maximum number of pixels to process
-
-    Returns:
-        ee.Image: An image with a single band 'ET_green'
-    """
-
-    def compute_valid_et_green():
-        projection = et_image.projection()
-        scale = projection.nominalScale()
-        time_start = et_image.get("system:time_start")
-
-        # Add a numeric property to rainfed_reference
-        rainfed_ref = rainfed_reference.map(lambda f: f.set("dummy", DUMMY_VALUE))
-
-        # Mask the ET image with rainfed reference areas
-        masked_et = et_image.updateMask(
-            rainfed_ref.reduceToImage(["dummy"], ee.Reducer.first()).mask()
-        )
-
-        # Compute the overall mean ET value
-        overall_mean_et = ee.Number(
-            masked_et.reduceRegion(
-                reducer=ee.Reducer.mean(),
-                geometry=feature_collection.geometry(),
-                scale=scale,
-                maxPixels=max_pixels,
-            ).get(et_band_name)
-        )
-
-        def compute_feature_mean(feature):
-            feature_mean = masked_et.reduceRegion(
-                reducer=ee.Reducer.mean(),
-                geometry=feature.geometry(),
-                scale=scale,
-                maxPixels=max_pixels,
-            ).get(et_band_name)
-
-            mean_et = ee.Number(
-                ee.Algorithms.If(
-                    ee.Algorithms.IsEqual(feature_mean, None),
-                    overall_mean_et,
-                    feature_mean,
-                )
-            )
-
-            return feature.set("mean_et", mean_et)
-
-        features_with_mean = feature_collection.map(compute_feature_mean)
-
-        et_green = features_with_mean.reduceToImage(
-            ["mean_et"], ee.Reducer.first()
-        ).rename("ET_green")
-
-        return et_green.setDefaultProjection(projection, None, scale).set(
-            "system:time_start", time_start
-        )
-
-    # Validate and get result as number (1 or 0)
-    is_valid = validate_image_band(et_image, et_band_name)
-
-    # Use ee.Algorithms.If with numeric comparison
-    return ee.Image(
-        ee.Algorithms.If(
-            ee.Number(is_valid).eq(1),
-            compute_valid_et_green(),
-            create_empty_et_image(et_image),
-        )
-    )
-
-
 def create_empty_et_image(
     source_image: ee.Image, band_name: str = "ET_green"
 ) -> ee.Image:
@@ -199,6 +114,57 @@ def compute_feature_mean(
     return feature.set("mean_et", mean_et)
 
 
+
+def compute_feature_std(
+    feature: ee.Feature,
+    masked_et: ee.Image,
+    overall_mean_et: ee.Number,
+    et_band_name: str,
+    scale: ee.Number,
+    max_pixels: int,
+) -> ee.Feature:
+    """
+    Compute mean and stdDev ET value for a single feature.
+
+    Args:
+        feature (ee.Feature): The feature to process
+        masked_et (ee.Image): The masked ET image
+        overall_mean_et (ee.Number): Fallback mean ET value
+        et_band_name (str): Name of the ET band
+        scale (ee.Number): Scale for reduction
+        max_pixels (int): Maximum pixels for computation
+
+    Returns:
+        ee.Feature: Feature with added mean ET property
+    """
+    feature_mean = masked_et.reduceRegion(
+        reducer=ee.Reducer.mean(),
+        geometry=feature.geometry(),
+        scale=scale,
+        maxPixels=max_pixels,
+    ).get(et_band_name)
+
+    feature_std = masked_et.reduceRegion(
+        reducer=ee.Reducer.stdDev(),
+        geometry=feature.geometry(),
+        scale=scale,
+        maxPixels=max_pixels,
+    ).get(et_band_name)
+
+    # # Use overall mean if feature has no valid ET values
+    # mean_et = ee.Number(
+    #     ee.Algorithms.If(
+    #         ee.Algorithms.IsEqual(feature_mean, None),
+    #         overall_mean_et,
+    #         feature_mean,
+    #     )
+    # )
+
+    return feature.set("mean_et", feature_mean).set("std_et", feature_std)
+
+
+
+
 def compute_valid_et_green(
     et_image: ee.Image,
     rainfed_reference: ee.FeatureCollection,
@@ -257,6 +223,65 @@ def compute_valid_et_green(
         "system:time_start", time_start
     )
 
+def compute_valid_et_green_std(
+    et_image: ee.Image,
+    rainfed_reference: ee.FeatureCollection,
+    feature_collection: ee.FeatureCollection,
+    et_band_name: str,
+    max_pixels: int,
+) -> ee.Image:
+    """
+    Compute ET green for valid input data.
+
+    Args:
+        et_image (ee.Image): Input ET image
+        rainfed_reference (ee.FeatureCollection): Rainfed reference areas
+        feature_collection (ee.FeatureCollection): Features for computation
+        et_band_name (str): Name of the ET band
+        max_pixels (int): Maximum pixels for computation
+
+    Returns:
+        ee.Image: Computed ET green image
+    """
+    projection = et_image.projection()
+    scale = projection.nominalScale()
+    time_start = et_image.get("system:time_start")
+
+    # Add a numeric property to rainfed_reference
+    rainfed_ref = rainfed_reference.map(lambda f: f.set("dummy", DUMMY_VALUE))
+
+    # Mask the ET image with rainfed reference areas
+    masked_et = et_image.updateMask(
+        rainfed_ref.reduceToImage(["dummy"], ee.Reducer.first()).mask()
+    )
+
+    # Compute the overall mean ET value (fallback for features without rainfed areas)
+    overall_mean_et = ee.Number(
+        masked_et.reduceRegion(
+            reducer=ee.Reducer.mean(),
+            geometry=feature_collection.geometry(),
+            scale=scale,
+            maxPixels=max_pixels,
+        ).get(et_band_name)
+    )
+
+    # Compute mean ET values for each feature
+    features_with_mean = feature_collection.map(
+        lambda f: compute_feature_std(
+            f, masked_et, overall_mean_et, et_band_name, scale, max_pixels
+        )
+    )
+
+    # Create an image with ET green values for each feature
+    et_green = features_with_mean.reduceToImage(["mean_et"], ee.Reducer.first()).rename(
+        "ET_green"
+    )
+    et_green_std = features_with_mean.reduceToImage(["std_et"], ee.Reducer.first()).rename(
+        "ET_green_std"
+    )
+    return et_green.addBands(et_green_std).setDefaultProjection(projection, None, scale).set(
+        "system:time_start", time_start
+    )
 
 def compute_et_green(
     et_image: ee.Image,
@@ -297,6 +322,49 @@ def compute_et_green(
                 max_pixels,
             ),
             create_empty_et_image(et_image),
+        )
+    )
+
+
+def compute_et_green_std(
+    et_image: ee.Image,
+    rainfed_reference: ee.FeatureCollection,
+    feature_collection: ee.FeatureCollection,
+    et_band_name: str = "downscaled",
+    max_pixels: int = MAX_PIXELS_DEFAULT,
+) -> ee.Image:
+    """
+    Compute ET green based on the given ET image and rainfed reference areas for each feature
+    in the provided feature collection. Returns an empty image with preserved metadata if
+    input validation fails.
+
+    Args:
+        et_image (ee.Image): An image containing ET values
+        rainfed_reference (ee.FeatureCollection): A feature collection of rainfed reference areas
+        feature_collection (ee.FeatureCollection): A feature collection over which to compute the ET green values
+        et_band_name (str, optional): The name of the band in the ET image containing the ET values
+        max_pixels (int, optional): Maximum number of pixels to process
+
+    Returns:
+        ee.Image: An image with a single band 'ET_green' containing the computed ET green values
+                 for each feature. Returns an empty (masked) image with preserved metadata if
+                 validation fails.
+    """
+    # Validate inputs and convert result to number (1 or 0)
+    is_valid = validate_image_band(et_image, et_band_name)
+
+    # Return either computed ET green or empty image based on validation
+    return ee.Image(
+        ee.Algorithms.If(
+            is_valid,
+            compute_valid_et_green_std(
+                et_image,
+                rainfed_reference,
+                feature_collection,
+                et_band_name,
+                max_pixels,
+            ),
+            create_empty_et_image(et_image).addBands(create_empty_et_image(et_image).rename('ET_green_std')),
         )
     )
 

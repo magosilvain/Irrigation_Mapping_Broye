@@ -42,38 +42,44 @@ def compute_volumetric_et_blue(et_blue: ee.Image) -> ee.Image:
 
 
 def postprocess_et_blue(
-    et_blue_image_present: ee.Image, et_blue_image_past: ee.Image, threshold: float
+    et_blue_image_present: ee.Image,
+    et_blue_image_past: ee.Image,
+    threshold: ee.Image,
 ) -> ee.Image:
     """
     Postprocess ET blue images based on current and past values and a threshold.
 
-    Keeps the current ET blue value only if:
-    1. The current value is >= threshold AND
-    2. The current value plus any negative value from previous month is > 0
-    Otherwise sets the pixel to 0.
-
     Args:
-        et_blue_image_present (ee.Image): Current ET blue image.
-        et_blue_image_past (ee.Image): Past ET blue image.
-        threshold (float): Threshold value for ET blue.
+        et_blue_image_present (ee.Image): Current ET blue image
+        et_blue_image_past (ee.Image): Past ET blue image
+        threshold (ee.Image): Threshold value for ET blue
 
     Returns:
-        ee.Image: Postprocessed ET blue image.
+        ee.Image: Postprocessed ET blue image with values set to 0 where conditions not met
     """
+    # Get the date from present image
     date = et_blue_image_present.get("system:time_start")
 
-    # Create condition mask:
-    condition = (
-        # Condition 1: Current value >= threshold
-        et_blue_image_present.gte(threshold).And(
-            # Condition 2: Current value + min(past_value, 0) > 0
-            et_blue_image_present.add(et_blue_image_past.min(0)).gt(0)
-        )
-    )
+    # Calculate the minimum of past image and 0
+    past_negative = et_blue_image_past.min(ee.Image.constant(0))
 
-    # Where condition is false, set to 0. Keep original values where condition is true
+    # # Build combined condition using ee.Algorithms.If()
+    # condition = ee.Algorithms.If(
+    #     ee.Algorithms.IsEqual(threshold, None),
+    #     ee.Image.constant(0),
+    #     et_blue_image_present.gte(threshold).And(
+    #         et_blue_image_present.add(past_negative).gt(0)
+    #     ),
+    # )
+
+    condition=et_blue_image_present.gte(threshold).And(
+            et_blue_image_present.add(past_negative).gt(0)
+        )
+
+    # Apply mask and return
     return (
-        et_blue_image_present.where(condition.Not(), 0)
+        et_blue_image_present.updateMask(condition)
+        .unmask(0)
         .rename("ET_blue")
         .set("system:time_start", date)
     )

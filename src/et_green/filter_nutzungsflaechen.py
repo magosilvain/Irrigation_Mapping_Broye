@@ -1,5 +1,6 @@
 import ee
 from typing import Set, List
+from utils.ee_utils import normalize_string_client, normalize_string_server
 
 
 def get_crops_to_exclude() -> Set[str]:
@@ -11,7 +12,7 @@ def get_crops_to_exclude() -> Set[str]:
     Returns:
         Set[str]: A set of crop names to exclude.
     """
-    return {
+    exclude_set = {
         # Indoor production
         "Landwirtschaftliche Produktion in Gebäuden (z. B. Champignon, Brüsseler)",
         # Permanent fruit and vine cultures
@@ -97,12 +98,26 @@ def get_crops_to_exclude() -> Set[str]:
         "Übrige Flächen mit Dauerkulturen, nicht beitragsberechtigt",
     }
 
+    return {normalize_string_client(crop) for crop in exclude_set}
+
 
 def get_rainfed_reference_crops() -> set:
     """
-    Returns a set of crop types to use as rainfed reference, excluding double-cropped fields.
+    Returns a set of crop types to use as rainfed reference.
     """
-    return {"Kunstwiesen (ohne Weiden)", "Übrige Dauerwiesen (ohne Weiden)"}
+    # return {"Kunstwiesen (ohne Weiden)", "Übrige Dauerwiesen (ohne Weiden)"}
+
+    # TODO: Change when not validating
+    rainfed_reference_set = {
+        "Extensiv genutzte Weiden",
+        "Weiden (Heimweiden, übrige Weiden ohne Sömmerungsweiden)",
+        "Übrige Dauerwiesen (ohne Weiden)",
+        "Übrige Grünfläche (Dauergrünfläche), beitragsberechtigt",
+        "Übrige Grünfläche (Dauergrünflächen), nicht beitragsberechtigt",
+        "Waldweiden (ohne bewaldete Fläche)",
+    }
+
+    return {normalize_string_client(crop) for crop in rainfed_reference_set}
 
 
 def get_winter_crops() -> Set[str]:
@@ -172,9 +187,9 @@ def create_crop_filters(crops_to_exclude: set, rainfed_crops: set) -> tuple:
     Returns:
         tuple: A tuple containing two ee.Filter objects (exclude_condition, rainfed_condition).
     """
-    exclude_condition = ee.Filter.inList("nutzung", list(crops_to_exclude)).Not()
+    exclude_condition = ee.Filter.inList("nutzung_normalized", list(crops_to_exclude)).Not()
     rainfed_condition = ee.Filter.And(
-        ee.Filter.inList("nutzung", list(rainfed_crops)),
+        ee.Filter.inList("nutzung_normalized", list(rainfed_crops)),
         ee.Filter.eq("isDoubleCropped", 0),  # Exclude double-cropped fields
     )
     return exclude_condition, rainfed_condition
@@ -214,34 +229,32 @@ def get_unique_nutzung(
     Returns:
         ee.List: A list of unique 'nutzung' values.
     """
-    return feature_collection.distinct("nutzung").aggregate_array("nutzung")
+    return feature_collection.distinct(nutzung_field_name).aggregate_array(
+        nutzung_field_name
+    )
 
 
 # Example usage
-def main():
-    # Load your feature collection and double cropping image
-    nutzung_collection = ee.FeatureCollection("path/to/your/nutzung/collection")
-    double_cropping_image = ee.Image("path/to/your/double_cropping_image")
+# def main():
+#     # Load your feature collection and double cropping image
+#     nutzung_collection = ee.FeatureCollection("path/to/your/nutzung/collection")
+#     double_cropping_image = ee.Image("path/to/your/double_cropping_image")
 
-    # Add double cropping information to the feature collection
-    nutzung_collection_with_double_crop = add_double_cropping_info(
-        nutzung_collection, double_cropping_image
-    )
+#     # Add double cropping information to the feature collection
+#     nutzung_collection_with_double_crop = add_double_cropping_info(
+#         nutzung_collection, double_cropping_image
+#     )
 
-    crops_to_exclude = get_crops_to_exclude()
-    rainfed_crops = get_rainfed_reference_crops()
+#     crops_to_exclude = get_crops_to_exclude()
+#     rainfed_crops = get_rainfed_reference_crops()
 
-    exclude_filter, rainfed_filter = create_crop_filters(
-        crops_to_exclude, rainfed_crops
-    )
+#     exclude_filter, rainfed_filter = create_crop_filters(
+#         crops_to_exclude, rainfed_crops
+#     )
 
-    filtered_fields, rainfed_fields = filter_crops(
-        nutzung_collection_with_double_crop, exclude_filter, rainfed_filter
-    )
+#     filtered_fields, rainfed_fields = filter_crops(
+#         nutzung_collection_with_double_crop, exclude_filter, rainfed_filter
+#     )
 
-    print("Filtered fields count:", filtered_fields.size().getInfo())
-    print("Rainfed reference fields count:", rainfed_fields.size().getInfo())
-
-
-if __name__ == "__main__":
-    main()
+#     print("Filtered fields count:", filtered_fields.size().getInfo())
+#     print("Rainfed reference fields count:", rainfed_fields.size().getInfo())

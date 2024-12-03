@@ -7,7 +7,6 @@ from enum import Enum
 class MosaicType(str, Enum):
     RECENT = "recent"
     LEAST_CLOUDY = "least_cloudy"
-    MAX_NDVI = "max_NDVI"
 
 
 class AggregationType(str, Enum):
@@ -126,16 +125,23 @@ def _apply_mosaic(
     original_scale: ee.Number,
     timestamp: Dict[str, Any],
 ) -> ee.Image:
-    """Applies mosaic operation with consistent projection."""
+    """
+    Applies mosaic operation with consistent projection.
+
+    Args:
+        collection: Input image collection
+        mosaic_type: Type of mosaic to create
+        original_projection: Target projection
+        original_scale: Target scale
+        timestamp: Timestamp to set on output image
+
+    Returns:
+        ee.Image: Mosaicked image with consistent projection
+    """
     if mosaic_type == MosaicType.RECENT:
         mosaic_image = collection.mosaic()
-    elif mosaic_type == MosaicType.MAX_NDVI:
-        mosaic_image = collection.qualityMosaic("NDVI")
     elif mosaic_type == MosaicType.LEAST_CLOUDY:
         mosaic_image = collection.sort("CLOUDY_PIXEL_PERCENTAGE").mosaic()
-    else:
-        raise ValueError(f"Invalid mosaic_type: {mosaic_type}")
-
     return (
         mosaic_image.setDefaultProjection(original_projection)
         .reproject(crs=original_projection, scale=original_scale)
@@ -156,6 +162,7 @@ def aggregate_stack(
     mosaic_type = MosaicType(options.get("mosaic_type", MosaicType.RECENT))
     original_projection = options["original_projection"]
     original_scale = options["original_scale"]
+    band_name = options.get("band_name")  # Get band_name from options
 
     time_interval = ee.List(time_interval)
     start_date, end_date = [ee.Date(time_interval.get(i)) for i in range(2)]
@@ -174,6 +181,7 @@ def aggregate_stack(
                 original_projection,
                 original_scale,
                 timestamp,
+                # band_name,
             ),
             _create_empty_image(
                 band_list, original_projection, original_scale, timestamp
@@ -514,8 +522,27 @@ def export_image_to_asset(
     )
 
     print(f"Exporting {task_name} for {year} to {asset_id}")
-    task.start() 
+    task.start()
     return task
+
+
+def export_feature_collection(
+    collection: ee.FeatureCollection, task_name: str, asset_id: str
+):
+    """
+    Export the feature collection to an Earth Engine asset.
+
+    Args:
+        collection: The feature collection to export
+        task_name: The name of the export task
+        asset_id: The asset ID to export to
+    """
+    task = ee.batch.Export.table.toAsset(
+        collection=collection,
+        description=task_name,
+        assetId=asset_id,
+    )
+    task.start()
 
 
 def print_value_ranges(
@@ -581,3 +608,53 @@ def is_image_empty(image: ee.Image) -> bool:
 
     # Convert the computed sum to a number and check if it equals 0
     return ee.Number(valid_pixels).eq(0).getInfo()
+
+
+def fill_gaps_with_zeros(image: ee.Image) -> ee.Image:
+    """
+    Fills gaps in an image with zeros.
+
+    Args:
+        image (ee.Image): Image to fill gaps in
+
+    Returns:
+        ee.Image: Image with gaps filled
+    """
+    return image.unmask(0)
+
+
+def normalize_string_client(s: str) -> str:
+    """
+    Normalize strings on client side for the exclusion and rainfed sets.
+    Replaces German umlauts with their ASCII equivalents.
+    """
+    replacements = {
+        "ä": "ae",
+        "ö": "oe",
+        "ü": "ue",
+        "ß": "ss",
+        "Ä": "Ae",
+        "Ö": "Oe",
+        "Ü": "Ue",
+    }
+
+    for old, new in replacements.items():
+        s = s.replace(old, new)
+
+    return s
+
+
+def normalize_string_server(ee_string: ee.String) -> ee.String:
+    """
+    Normalize strings server side using ee.String.replace().
+    Must be compatible with client-side normalization.
+    """
+    return (
+        ee_string.replace("ä", "ae", "g")
+        .replace("ö", "oe", "g")
+        .replace("ü", "ue", "g")
+        .replace("ß", "ss", "g")
+        .replace("Ä", "Ae", "g")
+        .replace("Ö", "Oe", "g")
+        .replace("Ü", "Ue", "g")
+    )

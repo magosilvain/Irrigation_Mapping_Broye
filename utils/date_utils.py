@@ -1,6 +1,7 @@
 import ee
 import pandas as pd
 from datetime import datetime
+from typing import Optional, Union
 
 
 def print_collection_dates(collection: ee.ImageCollection) -> None:
@@ -99,25 +100,30 @@ def create_centered_date_ranges(image_list: ee.List, buffer_days: int = 5) -> ee
 
     return image_list.map(lambda img: create_centered_range(img, buffer_days))
 
-def create_monthly_date_ranges(image_list: ee.List) -> ee.List:
+
+def create_forward_date_ranges(image_list: ee.List, window_days: int = 10) -> ee.List:
     """
-    Creates date ranges representing the first and last day of the month for each image in the list.
+    Creates forward-looking date ranges starting from the timestamps of a list of Earth Engine images.
 
     Args:
         image_list (ee.List): A list of Earth Engine images.
+        window_days (int): Number of days to look forward from the start date. Defaults to 10.
 
     Returns:
         ee.List: A list of lists, where each inner list contains two ee.Date objects
-                 representing the start and end of the month for the image's timestamp.
+                representing the start and end of a date range. The range starts at
+                the image timestamp and extends forward by window_days.
     """
 
-    def create_monthly_range(image):
-        center_date = ee.Date(ee.Image(image).get("system:time_start"))
-        start_date = center_date.getRange("month").start()  # First day of the month
-        end_date = center_date.getRange("month").end()  # Last day of the month
+    def create_forward_range(image, days):
+        # Get the start date from the image timestamp
+        start_date = ee.Date(ee.Image(image).get("system:time_start"))
+        # Create end date by advancing forward by the specified number of days
+        end_date = start_date.advance(days, "day")
+        # Return as a list of [start_date, end_date]
         return ee.List([start_date, end_date])
 
-    return image_list.map(create_monthly_range)
+    return image_list.map(lambda img: create_forward_range(img, window_days))
 
 
 def set_to_first_of_month(collection: ee.ImageCollection) -> ee.ImageCollection:
@@ -142,3 +148,121 @@ def set_to_first_of_month(collection: ee.ImageCollection) -> ee.ImageCollection:
         return image.set("system:time_start", new_date.millis())
 
     return collection.map(update_date)
+
+
+def get_days_in_month(date: ee.Date) -> ee.Number:
+    """
+    Get the number of days in a month for a given Earth Engine Date object.
+    Handles all months correctly, including February in leap years.
+
+    Args:
+        date (ee.Date): The input date to get the days in month for
+
+    Returns:
+        ee.Number: The number of days in the month
+    """
+    # Get the year and month
+    year = date.get("year")
+    month = date.get("month")
+
+    # Create start of next month
+    next_month = ee.Date.fromYMD(
+        ee.Algorithms.If(month.eq(12), year.add(1), year),
+        ee.Algorithms.If(month.eq(12), 1, month.add(1)),
+        1,
+    )
+
+    # Calculate days by differencing dates
+    days = next_month.difference(date.update(day=1), "day")
+
+    return days
+
+
+# def merge_same_date_images(
+#     collection: ee.ImageCollection,
+#     padding_size: Optional[Union[int, float]] = None,
+# ) -> ee.ImageCollection:
+#     """
+#     Merges images from the same date in a collection, with zero padding around valid pixels.
+
+#     Args:
+#         collection (ee.ImageCollection): Input collection with potentially duplicate dates
+#         padding_size (Optional[Union[int, float]]): Padding size in meters. If None, no padding is applied
+
+#     Returns:
+#         ee.ImageCollection: Collection with one image per unique date, with zero padding buffer
+#     """
+#     dates = collection.aggregate_array("system:time_start").distinct()
+
+#     def merge_date_images(date):
+#         date_num = ee.Number(date)
+#         date_imgs = collection.filter(ee.Filter.eq("system:time_start", date_num))
+
+#         def add_padding(img):
+#             """Add a buffer of zeros around the image"""
+#             if padding_size is None:
+#                 return img
+
+#             # Get original valid pixels mask
+#             original_mask = img.mask()
+
+#             # Create padded mask by growing the original mask
+#             padded_mask = original_mask.focal_max(radius=padding_size, units="meters")
+
+#             return img.updateMask(original_mask).unmask(0).updateMask(padded_mask)
+
+#         if padding_size is not None:
+#             date_imgs = date_imgs.map(add_padding)
+
+#         merged = date_imgs.mosaic()
+#         first = date_imgs.first()
+
+#         return merged.set(
+#             {
+#                 "system:time_start": date_num,
+#                 "system:footprint": first.get("system:footprint"),
+#             }
+#         )
+
+#     merged_list = dates.map(merge_date_images)
+#     return ee.ImageCollection(merged_list)
+
+def merge_same_date_images(collection: ee.ImageCollection) -> ee.ImageCollection:
+    """
+    Merges images from the same date in a collection, handling edge effects by taking
+    the mean value in overlapping areas.
+
+    Args:
+        collection (ee.ImageCollection): Input collection with potentially duplicate dates
+
+    Returns:
+        ee.ImageCollection: Collection with one image per unique date, with smooth transitions at edges
+    """
+    dates = collection.aggregate_array("system:time_start").distinct()
+
+    def merge_date_images(date):
+        date_num = ee.Number(date)
+        date_imgs = collection.filter(ee.Filter.eq("system:time_start", date_num))
+        
+        # Calculate the mean and count of valid pixels
+        mean_img = date_imgs.mean()
+        count_img = date_imgs.count()
+        
+        # Use mosaic only where we have single image coverage
+        mosaic_img = date_imgs.mosaic()
+        
+        # Combine: use mean where count > 1, mosaic elsewhere
+        final_img = ee.Image(ee.Algorithms.If(
+            count_img.gt(1),
+            mean_img,
+            mosaic_img
+        ))
+        
+        first = date_imgs.first()
+        return final_img.set({
+            "system:time_start": date_num,
+            "system:footprint": first.get("system:footprint"),
+        })
+
+    merged_list = dates.map(merge_date_images)
+    return ee.ImageCollection(merged_list)
