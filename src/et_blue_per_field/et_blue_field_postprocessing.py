@@ -28,8 +28,9 @@ def compute_field_et_stats(
     fields: ee.FeatureCollection,
     date: str,
     et_band_name: str = "ET",
-    scale: Optional[float] = None,
+    scale: int = 10,
     max_pixels: int = int(1e9),
+    prc: int = 50
 ) -> ee.FeatureCollection:
     """
     Compute ET statistics for each field in a feature collection.
@@ -64,9 +65,29 @@ def compute_field_et_stats(
         zero_mask = et_image.select(et_band_name).eq(0)
         nonzero_et = et_image.select(et_band_name).updateMask(zero_mask.Not())
 
+        # # Compute statistics
+        # median_stats = compute_regional_stats(
+        #     et_image.select(et_band_name),
+        #     geometry,
+        #     ee.Reducer.median(),
+        #     et_band_name,
+        #     scale,
+        #     max_pixels,
+        #     projection,
+        # )
         # Compute statistics
         median_stats = compute_regional_stats(
             et_image.select(et_band_name),
+            geometry,
+            ee.Reducer.percentile([100 - prc]),
+            et_band_name,
+            scale,
+            max_pixels,
+            projection,
+        )
+
+        median_stats_gt0 = compute_regional_stats(
+            et_image.select(et_band_name).updateMask(et_image.select(et_band_name).gt(0)),
             geometry,
             ee.Reducer.median(),
             et_band_name,
@@ -89,6 +110,8 @@ def compute_field_et_stats(
         return feature.set(
             {
                 f"median_et_blue_{date}": median_stats.get(et_band_name),
+                f"median_et_blue_gt0_{date}": median_stats_gt0.get(et_band_name),
+                # f"median_et_blue_{date}": median_stats.values().get(0),
                 f"zero_fraction_{date}": zero_stats.get(et_band_name),
             }
         )
@@ -110,7 +133,10 @@ def compute_et_volume(fields: ee.FeatureCollection, date: str) -> ee.FeatureColl
 
     def add_volume(feature: ee.Feature, date: str) -> ee.Feature:
         area = feature.geometry().area()
-        et_mm = ee.Number(feature.get(f"median_et_blue_{date}"))
+        # et_mm = ee.Number(feature.get(f"median_et_blue_{date}"))
+        et_mm = ee.Number(ee.Algorithms.If(ee.Number(feature.get(f"median_et_blue_{date}")).gt(0),
+                          feature.get(f"median_et_blue_gt0_{date}"),
+                          0))
         et_volume = et_mm.multiply(area).divide(1000)
 
         return feature.set({f"et_blue_m3_{date}": et_volume})
