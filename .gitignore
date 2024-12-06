@@ -1,0 +1,13 @@
+# macOS-specific files
+.DS_Store
+
+# Cache files
+*.cache
+.cache/
+
+# Data files
+*.csv
+*.json
+*.xml
+*.data
+data/
