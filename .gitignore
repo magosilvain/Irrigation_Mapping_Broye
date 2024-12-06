@@ -11,3 +11,5 @@
 *.xml
 *.data
 data/
+
+venv/
